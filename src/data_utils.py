@@ -1,0 +1,204 @@
+"""Data loading and tokenization helpers for experiments."""
+
+from __future__ import annotations
+
+from collections import Counter
+from pathlib import Path
+from typing import Dict, Sequence
+
+
+_HF_DATASET_REPO = "PHMGC/roberta-bias-reduction-datasets"
+_CLASS_DISTRIBUTIONS_FILE = "all_class_distributions.json"
+
+
+def save_class_distribution(author_name: str, dataset_name: str, ds) -> Dict[int, int]:
+    """Compute and persist class distribution into the shared class_distributions.json."""
+    import json
+    from src.paths import DATA_DIR
+    from datasets import DatasetDict
+
+    if isinstance(ds, DatasetDict):
+        all_labels = [label for split in ds.values() for label in split["label"]]
+    else:
+        all_labels = list(ds["label"])
+
+    all_labels = [l for l in all_labels if l >= 0]
+    counts = compute_class_distribution(all_labels)
+    total = sum(counts.values())
+    minority = min(counts.values())
+    majority = max(counts.values())
+    entry = {str(k): v for k, v in counts.items()}
+    entry["total"] = total
+    entry["imbalance_ratio"] = majority / minority
+
+    out = DATA_DIR / _CLASS_DISTRIBUTIONS_FILE
+    data = json.loads(out.read_text()) if out.exists() else {}
+    data[f"{author_name}/{dataset_name}"] = entry
+    out.write_text(json.dumps(data, indent=2))
+    return counts
+
+
+def load_class_distribution(author_name: str, dataset_name: str) -> dict:
+    """Load class distribution from the shared JSON (local or HF Hub).
+
+    Resolution order:
+    1. data/class_distributions.json (local)
+    2. class_distributions.json on HF Hub (single-file download, cached locally)
+    """
+    import json
+    from src.paths import DATA_DIR
+
+    key = f"{author_name}/{dataset_name}"
+    out = DATA_DIR / _CLASS_DISTRIBUTIONS_FILE
+
+    if out.exists():
+        data = json.loads(out.read_text())
+        if key in data:
+            return data[key]
+
+    # Fallback: download the single shared file from HF Hub
+    try:
+        from huggingface_hub import hf_hub_download
+        local = hf_hub_download(
+            repo_id=_HF_DATASET_REPO,
+            repo_type="dataset",
+            filename=_CLASS_DISTRIBUTIONS_FILE,
+        )
+        data = json.loads(Path(local).read_text())
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(data, indent=2))
+        if key in data:
+            return data[key]
+    except Exception as e:
+        raise FileNotFoundError(
+            f"Chave '{key}' não encontrada em {_CLASS_DISTRIBUTIONS_FILE}. "
+            "Execute 00_preprocessing.ipynb ou verifique o HF Hub."
+        ) from e
+
+    raise FileNotFoundError(
+        f"Chave '{key}' não encontrada em {_CLASS_DISTRIBUTIONS_FILE}."
+    )
+
+
+def compute_class_distribution(labels: Sequence) -> Dict[int, int]:
+    """Return class counts for a label sequence."""
+    return dict(Counter(int(l) for l in labels))
+
+
+def get_tokenized_dataset(
+    author_name: str,
+    dataset_name: str,
+    tokenizer,
+    split: str,
+    strategy: str = "baseline",
+    hf_repo: str = _HF_DATASET_REPO,
+    max_length: int = 128,
+    train_ratio: float = 0.8,
+    seed: int = 42,
+):
+    """Return a tokenized Dataset ready for training or evaluation.
+
+    Resolution order:
+    1. Local tokenized cache  (DATA_DIR/tokenized/{author}__{name}_{split}_{strategy})
+    2. HF Hub tokenized dataset
+    3. Local raw dataset → tokenize → save to cache
+    4. RuntimeError asking to run 00_preprocessing.ipynb
+
+    Args:
+        author_name:  e.g. "ribeiro", "mcauley", "stanfordnlp"
+        dataset_name: e.g. "sentistrength_myspace"
+        tokenizer:    HuggingFace tokenizer instance
+        split:        "train" or "test"
+        strategy:     experiment label used in cache folder name, e.g. "baseline"
+        hf_repo:      HuggingFace Hub dataset repo ID
+        max_length:   max token length for padding/truncation
+        train_ratio:  train fraction when the raw dataset has no native train/test split
+        seed:         random seed for splitting
+    """
+    from datasets import load_from_disk
+
+    cache_path = _tokenized_cache_path(author_name, dataset_name, split, strategy)
+
+    # 1. Local cache
+    if cache_path.exists():
+        print(f"Cache local: {cache_path.name}")
+        return load_from_disk(str(cache_path))
+
+    # 2. HF Hub (stored under tokenized/{name} to mirror local structure)
+    try:
+        from huggingface_hub import snapshot_download
+        hub_folder = f"tokenized/{cache_path.name}"
+        local_hub = snapshot_download(
+            repo_id=hf_repo,
+            repo_type="dataset",
+            allow_patterns=f"{hub_folder}/*",
+        )
+        hub_path = Path(local_hub) / hub_folder
+        if hub_path.is_dir():
+            hub_ds = load_from_disk(str(hub_path))
+            print(f"Tokenizado baixado do Hub ({hf_repo}/{hub_folder})")
+            return hub_ds
+        print(f"[HF Hub] Pasta não encontrada no repo: {hub_folder}")
+    except Exception as e:
+        print(f"[HF Hub] Falha ao baixar tokenizado: {e}")
+
+    # 3. Tokenize from local raw
+    train_split, test_split = _load_raw_splits(author_name, dataset_name, train_ratio, seed)
+    raw = train_split if split == "train" else test_split
+    return _format_and_save(raw, tokenizer, cache_path, max_length)
+
+
+# ── Private helpers ───────────────────────────────────────────────────────────
+
+def _tokenized_cache_path(author_name: str, dataset_name: str, split: str, strategy: str) -> Path:
+    from src.paths import DATA_DIR
+    return DATA_DIR / "tokenized" / f"{author_name}__{dataset_name}_{split}_{strategy}"
+
+
+def _load_raw_splits(author_name: str, dataset_name: str, train_ratio: float, seed: int):
+    """Load raw dataset from local disk and return (train, test) splits."""
+    from datasets import load_from_disk, Dataset
+    from src.paths import DATA_DIR
+
+    raw_path = DATA_DIR / "raw" / author_name / dataset_name
+    is_valid_dataset = (raw_path / "dataset_info.json").exists() or (raw_path / "dataset_dict.json").exists()
+    if not raw_path.exists() or not is_valid_dataset:
+        raise RuntimeError(
+            f"Dataset '{author_name}/{dataset_name}' não encontrado localmente.\n"
+            "Execute `00_preprocessing.ipynb` primeiro para baixar os dados crus."
+        )
+
+    raw = load_from_disk(str(raw_path))
+
+    if isinstance(raw, Dataset):
+        src = raw
+    elif "train" in raw and "test" in raw:
+        return raw["train"], raw["test"]
+    elif "train" in raw:
+        src = raw["train"]
+    else:
+        raise ValueError(f"Splits válidos não encontrados em '{author_name}/{dataset_name}'.")
+
+    s = src.train_test_split(test_size=1 - train_ratio, seed=seed)
+    return s["train"], s["test"]
+
+
+def _format_and_save(dataset, tokenizer, cache_path: Path, max_length: int):
+    """Tokenize, set PyTorch format, save to cache_path, and return."""
+    tokenized = dataset.map(
+        lambda examples: tokenizer(
+            examples["text"],
+            padding="max_length",
+            truncation=True,
+            max_length=max_length,
+        ),
+        batched=True,
+        desc=f"Tokenizando {cache_path.name}",
+    )
+    if "label" in tokenized.column_names:
+        tokenized = tokenized.rename_column("label", "labels")
+    tokenized.set_format("torch", columns=["input_ids", "attention_mask", "labels"])
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tokenized.save_to_disk(str(cache_path))
+    print(f"Tokenizado e salvo: {cache_path.name}")
+    return tokenized

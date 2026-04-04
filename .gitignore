@@ -1,4 +1,15 @@
-.venv
 
-# Ignore local model artifacts
+# Repo
+data/
 models/
+
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+
+# LLM
+.claude/
+
+# VSCode
+.vscode/
