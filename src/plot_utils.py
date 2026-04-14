@@ -13,15 +13,28 @@ def results_to_dataframe(results: Dict[str, Dict[str, float]]) -> pd.DataFrame:
 
     Automatically adds imbalance_ratio from all_class_distributions.json when available.
     """
+    from src.config import DATASETS
     from src.data_utils import load_class_distribution
+
+    dataset_to_author = {
+        dataset_name: author_name
+        for author_name, dataset_names in DATASETS.items()
+        for dataset_name in dataset_names
+    }
 
     enriched = {}
     for key, metrics in results.items():
         row = dict(metrics)
-        parts = key.split("/", 1)
-        if len(parts) == 2:
+
+        if "/" in key:
+            author_name, dataset_name = key.split("/", 1)
+        else:
+            dataset_name = key
+            author_name = dataset_to_author.get(dataset_name)
+
+        if author_name and dataset_name:
             try:
-                dist = load_class_distribution(parts[0], parts[1])
+                dist = load_class_distribution(author_name, dataset_name)
                 row["imbalance_ratio"] = dist["imbalance_ratio"]
             except FileNotFoundError:
                 pass

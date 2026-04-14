@@ -10,7 +10,6 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from huggingface_hub import hf_hub_url, get_hf_file_metadata
 from src.paths import MODELS_DIR
 
 
@@ -85,17 +84,6 @@ def train_model(
         print(f"Modelo já treinado localmente em: {output_path.name}")
         return model
 
-    # 2. Check if model is already trained and available on Hugging Face Hub under 'subfolder'
-    try:
-        subfolder_path = output_path.relative_to(MODELS_DIR)
-        get_hf_file_metadata(
-            hf_hub_url(repo_id=repo_id, filename=f"{subfolder_path}/config.json")
-        )
-        print(f"Modelo já treinado na Nuvem (Hugging Face) em: {subfolder_path}")
-        return
-    except Exception:
-        pass
-
     # Iniciação do dataloader e treinamento
     dataloader = DataLoader(
         train_dataset,
@@ -115,3 +103,34 @@ def train_model(
     print(f"Model and tokenizer saved to {output_dir}")
 
     return model
+
+
+def train_one_job(
+    dataset_id: str,
+    train_cache_path: str,
+    model_name: str,
+    model_dir: str,
+    epochs: int,
+) -> str:
+    """Module-level subprocess entry point for run_parallel_jobs().
+
+    Must be defined here (not in a notebook) so pickle can serialize it
+    by dotted reference 'src.train_utils.train_one_job' for the spawn context.
+    All heavy imports are deferred so they resolve after CUDA_VISIBLE_DEVICES
+    is set by _worker_entry in parallel_utils.
+    """
+    from datasets import load_from_disk
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+    tokenizer  = AutoTokenizer.from_pretrained(model_name)
+    train_tok  = load_from_disk(train_cache_path)
+    model      = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=2)
+
+    train_model(
+        model=model,
+        train_dataset=train_tok,
+        tokenizer=tokenizer,
+        output_dir=model_dir,
+        epochs=epochs,
+    )
+    return dataset_id

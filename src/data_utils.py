@@ -39,11 +39,12 @@ def save_class_distribution(author_name: str, dataset_name: str, ds) -> Dict[int
 
 
 def load_class_distribution(author_name: str, dataset_name: str) -> dict:
-    """Load class distribution from the shared JSON (local or HF Hub).
+    """Load class distribution from local file or HF cache.
 
     Resolution order:
-    1. data/class_distributions.json (local)
-    2. class_distributions.json on HF Hub (single-file download, cached locally)
+    1. data/all_class_distributions.json (project-local)
+    2. HF cache only (no network)
+    3. Download from HF Hub (stored in HF cache)
     """
     import json
     from src.paths import DATA_DIR
@@ -56,17 +57,30 @@ def load_class_distribution(author_name: str, dataset_name: str) -> dict:
         if key in data:
             return data[key]
 
-    # Fallback: download the single shared file from HF Hub
+    # 2) Try HF cache only (no download)
     try:
         from huggingface_hub import hf_hub_download
+
+        cached = hf_hub_download(
+            repo_id=_HF_DATASET_REPO,
+            repo_type="dataset",
+            filename=_CLASS_DISTRIBUTIONS_FILE,
+            local_files_only=True,
+        )
+        data = json.loads(Path(cached).read_text())
+        if key in data:
+            return data[key]
+    except Exception:
+        pass
+
+    # 3) Fallback: download to HF cache (do not copy into DATA_DIR)
+    try:
         local = hf_hub_download(
             repo_id=_HF_DATASET_REPO,
             repo_type="dataset",
             filename=_CLASS_DISTRIBUTIONS_FILE,
         )
         data = json.loads(Path(local).read_text())
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(data, indent=2))
         if key in data:
             return data[key]
     except Exception as e:
@@ -136,7 +150,7 @@ def get_tokenized_dataset(
         hub_path = Path(local_hub) / hub_folder
         if hub_path.is_dir():
             hub_ds = load_from_disk(str(hub_path))
-            print(f"Tokenizado baixado do Hub ({hf_repo}/{hub_folder})")
+            print(f"Tokenizado resolvido do Hub localmente ({hf_repo}/{hub_folder})")
             return hub_ds
         print(f"[HF Hub] Pasta não encontrada no repo: {hub_folder}")
     except Exception as e:
@@ -150,9 +164,37 @@ def get_tokenized_dataset(
 
 # ── Private helpers ───────────────────────────────────────────────────────────
 
-def _tokenized_cache_path(author_name: str, dataset_name: str, split: str, strategy: str) -> Path:
+def get_tokenized_cache_path(author_name: str, dataset_name: str, split: str, strategy: str) -> Path:
+    """Return the actual directory path where the tokenized dataset is stored.
+    Checks local DATA_DIR first, then the HuggingFace Hub cache. If neither exists,
+    returns the fallback local path for saving.
+    """
     from src.paths import DATA_DIR
-    return DATA_DIR / "tokenized" / f"{author_name}__{dataset_name}_{split}_{strategy}"
+    target_name = f"{author_name}__{dataset_name}_{split}_{strategy}"
+    local_path = DATA_DIR / "tokenized" / target_name
+    
+    if local_path.is_dir():
+        return local_path
+        
+    try:
+        from huggingface_hub import snapshot_download
+        hub_folder = f"tokenized/{target_name}"
+        local_hub = snapshot_download(
+            repo_id="PHMGC/roberta-bias-reduction-datasets",
+            repo_type="dataset",
+            allow_patterns=f"{hub_folder}/*",
+        )
+        hub_path = Path(local_hub) / hub_folder
+        if hub_path.is_dir():
+            return hub_path
+    except Exception:
+        pass
+        
+    return local_path
+
+
+# Keep the private alias for internal use -> Resolvendo para o local ou HF CACHE auto
+_tokenized_cache_path = get_tokenized_cache_path
 
 
 def _load_raw_splits(author_name: str, dataset_name: str, train_ratio: float, seed: int):
