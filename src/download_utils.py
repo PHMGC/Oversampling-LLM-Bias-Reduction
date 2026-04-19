@@ -14,15 +14,9 @@ _RIBEIRO_GITHUB_RAW = (
 )
 
 _MCAULEY_URLS = {
-    "luxury_beauty": "https://mcauleylab.ucsd.edu/public_datasets/data/amazon_v2/categoryFiles/Luxury_Beauty.json.gz",
-    "cds_reviews":   "https://mcauleylab.ucsd.edu/public_datasets/data/amazon_v2/categoryFiles/CDs_and_Vinyl.json.gz",
-    "digital_music": "https://mcauleylab.ucsd.edu/public_datasets/data/amazon_v2/categoryFiles/Digital_Music.json.gz",
-}
-
-_MCAULEY_MAX_SAMPLES = {
-    "luxury_beauty": None,
-    "cds_reviews":   1_400_000,
-    "digital_music": None,
+    "luxury_beauty": "https://mcauleylab.ucsd.edu/public_datasets/data/amazon_v2/categoryFilesSmall/Luxury_Beauty_5.json.gz",
+    "cds_reviews":   "https://mcauleylab.ucsd.edu/public_datasets/data/amazon_v2/categoryFilesSmall/CDs_and_Vinyl_5.json.gz",
+    "digital_music": "https://mcauleylab.ucsd.edu/public_datasets/data/amazon_v2/categoryFilesSmall/Digital_Music_5.json.gz",
 }
 
 _DOWNLOAD_TIMEOUT = (15, 120)  # (connect timeout, read timeout)
@@ -93,7 +87,6 @@ def _download_mcauley(dataset_name: str, out_path: Path):
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     url = _MCAULEY_URLS[dataset_name]
-    max_n = _MCAULEY_MAX_SAMPLES.get(dataset_name)
     gz_path = out_path.parent / f"{dataset_name}.json.gz"
     parquet_path = out_path.parent / f"{dataset_name}.parquet"
     writer = None
@@ -142,8 +135,6 @@ def _download_mcauley(dataset_name: str, out_path: Path):
                     total_saved += len(batch)
                     batch = []
                     print(f"\r  {total_saved:,} registros processados", end="", flush=True)
-                    if max_n and total_saved >= max_n:
-                        break
 
         if batch:
             flush(batch)

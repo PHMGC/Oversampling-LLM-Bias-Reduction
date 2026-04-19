@@ -1,12 +1,25 @@
+import os, sys
 from pathlib import Path
-from huggingface_hub import HfApi, login
+from huggingface_hub import HfApi
+from dotenv import load_dotenv
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from src.paths import ROOT_DIR
+
+
+def _get_api() -> HfApi:
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise SystemExit("HF_TOKEN env var not set. Run as: HF_TOKEN=hf_xxx python src/upload2hf.py")
+    return HfApi(token=token)
+
 
 def upload_models_to_hub(repo_id: str, models_base_dir: str):
     """
     Uploads all trained models from a local directory to a single Hugging Face repository,
     using a different revision (branch) for each model.
     """
-    api = HfApi()
+    api = _get_api()
     base_path = Path(models_base_dir)
 
     model_dirs = list({
@@ -46,7 +59,7 @@ def upload_datasets_to_hub(repo_id: str, data_dir: str):
     Uploads the entire data/ folder to a HuggingFace Dataset repository,
     preserving raw/ and tokenized/ subfolders. Unchanged files are skipped automatically.
     """
-    api = HfApi()
+    api = _get_api()
     api.upload_folder(
         folder_path=data_dir,
         repo_id=repo_id,
@@ -56,14 +69,12 @@ def upload_datasets_to_hub(repo_id: str, data_dir: str):
     print(f"Done: {data_dir} → {repo_id}")
 
 if __name__ == "__main__":
-    from paths import ROOT_DIR
+    load_dotenv(ROOT_DIR / ".env")
 
     model_repo_id = "PHMGC/roberta-bias-reduction"
     dataset_repo_id = "PHMGC/roberta-bias-reduction-datasets"
     models_dir = ROOT_DIR / "models"
     data_dir   = ROOT_DIR / "data"
-
-    login()
 
     print("Uploading Models")
     upload_models_to_hub(model_repo_id, str(models_dir))

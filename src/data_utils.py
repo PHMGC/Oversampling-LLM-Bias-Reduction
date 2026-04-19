@@ -106,7 +106,7 @@ def get_tokenized_dataset(
     split: str,
     strategy: str = "baseline",
     hf_repo: str = _HF_DATASET_REPO,
-    max_length: int = 128,
+    max_length: int = 256,
     train_ratio: float = 0.8,
     seed: int = 42,
 ):
@@ -156,7 +156,15 @@ def get_tokenized_dataset(
     except Exception as e:
         print(f"[HF Hub] Falha ao baixar tokenizado: {e}")
 
-    # 3. Tokenize from local raw
+    # 3. Tokenize from local raw — only allowed for baseline; other strategies must
+    # prepare their datasets in the corresponding notebook before running train.py.
+    if strategy != "baseline":
+        raise FileNotFoundError(
+            f"No cached dataset found for strategy '{strategy}' "
+            f"({author_name}/{dataset_name}, split={split}). "
+            f"Run the corresponding strategy notebook first."
+        )
+
     train_split, test_split = _load_raw_splits(author_name, dataset_name, train_ratio, seed)
     raw = train_split if split == "train" else test_split
     return _format_and_save(raw, tokenizer, cache_path, max_length)
@@ -170,15 +178,14 @@ def get_tokenized_cache_path(author_name: str, dataset_name: str, split: str, st
     returns the fallback local path for saving.
     """
     from src.paths import DATA_DIR
-    target_name = f"{author_name}__{dataset_name}_{split}_{strategy}"
-    local_path = DATA_DIR / "tokenized" / target_name
-    
+    local_path = DATA_DIR / "tokenized" / strategy / author_name / dataset_name / split
+
     if local_path.is_dir():
         return local_path
-        
+
     try:
         from huggingface_hub import snapshot_download
-        hub_folder = f"tokenized/{target_name}"
+        hub_folder = f"tokenized/{strategy}/{author_name}/{dataset_name}/{split}"
         local_hub = snapshot_download(
             repo_id="PHMGC/roberta-bias-reduction-datasets",
             repo_type="dataset",
@@ -198,17 +205,34 @@ _tokenized_cache_path = get_tokenized_cache_path
 
 
 def _load_raw_splits(author_name: str, dataset_name: str, train_ratio: float, seed: int):
-    """Load raw dataset from local disk and return (train, test) splits."""
+    """Load raw dataset from local disk (or HF Hub fallback) and return (train, test) splits."""
     from datasets import load_from_disk, Dataset
     from src.paths import DATA_DIR
 
     raw_path = DATA_DIR / "raw" / author_name / dataset_name
-    is_valid_dataset = (raw_path / "dataset_info.json").exists() or (raw_path / "dataset_dict.json").exists()
-    if not raw_path.exists() or not is_valid_dataset:
-        raise RuntimeError(
-            f"Dataset '{author_name}/{dataset_name}' não encontrado localmente.\n"
-            "Execute `00_preprocessing.ipynb` primeiro para baixar os dados crus."
-        )
+    is_valid = lambda p: (p / "dataset_info.json").exists() or (p / "dataset_dict.json").exists()
+
+    if not raw_path.exists() or not is_valid(raw_path):
+        # Try downloading raw dataset from HF Hub
+        try:
+            from huggingface_hub import snapshot_download
+            hub_folder = f"raw/{author_name}/{dataset_name}"
+            local_hub = snapshot_download(
+                repo_id=_HF_DATASET_REPO,
+                repo_type="dataset",
+                allow_patterns=f"{hub_folder}/*",
+            )
+            hub_path = Path(local_hub) / hub_folder
+            if hub_path.exists() and is_valid(hub_path):
+                raw_path = hub_path
+                print(f"Raw dataset resolvido do Hub ({_HF_DATASET_REPO}/{hub_folder})")
+            else:
+                raise FileNotFoundError(f"Pasta não encontrada no Hub: {hub_folder}")
+        except Exception as e:
+            raise RuntimeError(
+                f"Dataset '{author_name}/{dataset_name}' não encontrado localmente nem no HF Hub.\n"
+                "Execute `00_preprocessing.ipynb` primeiro para baixar os dados crus."
+            ) from e
 
     raw = load_from_disk(str(raw_path))
 
@@ -244,3 +268,12 @@ def _format_and_save(dataset, tokenizer, cache_path: Path, max_length: int):
     tokenized.save_to_disk(str(cache_path))
     print(f"Tokenizado e salvo: {cache_path.name}")
     return tokenized
+
+
+def set_torch_format(dataset):
+    """Ensure a tokenized dataset returns PyTorch tensors for model inputs."""
+    columns = ["input_ids", "attention_mask", "labels"]
+    existing_columns = [c for c in columns if c in dataset.column_names]
+    if existing_columns:
+        dataset.set_format("torch", columns=existing_columns)
+    return dataset

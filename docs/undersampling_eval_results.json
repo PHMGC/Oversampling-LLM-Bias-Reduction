@@ -1,0 +1,172 @@
+[
+    {
+        "dataset": "sentistrength_myspace",
+        "methods": [
+            {
+                "method": "baseline",
+                "macro_f1": 0.81,
+                "tpr_gap": 0.35,
+                "speedup": 1,
+                "precision_majority": 0.943,
+                "recall_majority": 0.965,
+                "precision_minority": 0.824,
+                "recall_minority": 0.63
+            },
+            {
+                "method": "UBR",
+                "macro_f1": 0.815,
+                "tpr_gap": 0.184,
+                "speedup": 1.577,
+                "precision_majority": 0.964,
+                "recall_majority": 0.943,
+                "precision_minority": 0.741,
+                "recall_minority": 0.812
+            },
+            {
+                "method": "E2SC_US",
+                "macro_f1": 0.81,
+                "tpr_gap": 0.215,
+                "speedup": 1.802,
+                "precision_majority": 0.956,
+                "recall_majority": 0.947,
+                "precision_minority": 0.758,
+                "recall_minority": 0.765
+            },
+            {
+                "method": "CNN",
+                "macro_f1": 0.798,
+                "tpr_gap": 0.199,
+                "speedup": 2.377,
+                "precision_majority": 0.956,
+                "recall_majority": 0.911,
+                "precision_minority": 0.628,
+                "recall_minority": 0.797
+            },
+            {
+                "method": "NM1",
+                "macro_f1": 0.733,
+                "tpr_gap": 0.209,
+                "speedup": 1.691,
+                "precision_majority": 0.954,
+                "recall_majority": 0.916,
+                "precision_minority": 0.642,
+                "recall_minority": 0.745
+            },
+            {
+                "method": "NM2",
+                "macro_f1": 0.787,
+                "tpr_gap": 0.21,
+                "speedup": 1.621,
+                "precision_majority": 0.951,
+                "recall_majority": 0.896,
+                "precision_minority": 0.646,
+                "recall_minority": 0.73
+            }
+        ]
+    },
+    {
+        "dataset": "luxury_beauty",
+        "methods": [
+            {
+                "method": "baseline",
+                "macro_f1": 0.931,
+                "tpr_gap": 0.156,
+                "speedup": 1
+            },
+            {
+                "method": "UBR",
+                "macro_f1": 0.92,
+                "tpr_gap": 0.07,
+                "speedup": 1.88
+            },
+            {
+                "method": "E2SC_US",
+                "macro_f1": 0.929,
+                "tpr_gap": 0.091,
+                "speedup": 1.884
+            },
+            {
+                "method": "CNN",
+                "macro_f1": 0.912,
+                "tpr_gap": 0.086,
+                "speedup": 1.687
+            },
+            {
+                "method": "NM1",
+                "macro_f1": 0.922,
+                "tpr_gap": 0.075,
+                "speedup": 1.963
+            },
+            {
+                "method": "NM2",
+                "macro_f1": 0.567,
+                "tpr_gap": 0.351,
+                "speedup": 2.468
+            }
+        ]
+    },
+    {
+        "dataset": "cds_reviews",
+        "methods": [
+            {
+                "method": "baseline",
+                "macro_f1": 0.92,
+                "tpr_gap": 0.166,
+                "speedup": 1
+            },
+            {
+                "method": "UBR",
+                "macro_f1": 0.869,
+                "tpr_gap": 0.104,
+                "speedup": 2.026
+            },
+            {
+                "method": "E2SC_US",
+                "macro_f1": 0.914,
+                "tpr_gap": 0.124,
+                "speedup": 1.924
+            }
+        ]
+    },
+    {
+        "dataset": "digital_music",
+        "methods": [
+            {
+                "method": "baseline",
+                "macro_f1": 0.878,
+                "tpr_gap": 0.308,
+                "speedup": 1
+            },
+            {
+                "method": "UBR",
+                "macro_f1": 0.917,
+                "tpr_gap": 0.185,
+                "speedup": 2.067
+            },
+            {
+                "method": "E2SC_US",
+                "macro_f1": 0.887,
+                "tpr_gap": 0.214,
+                "speedup": 2.903
+            },
+            {
+                "method": "CNN",
+                "macro_f1": 0.871,
+                "tpr_gap": 0.208,
+                "speedup": 2.709
+            },
+            {
+                "method": "NM1",
+                "macro_f1": 0.851,
+                "tpr_gap": 0.207,
+                "speedup": 2.867
+            },
+            {
+                "method": "NM2",
+                "macro_f1": 0.449,
+                "tpr_gap": 0.619,
+                "speedup": 12.498
+            }
+        ]
+    }
+]

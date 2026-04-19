@@ -32,6 +32,7 @@ def parse_args():
     p.add_argument("--strategy",   required=True, choices=STRATEGIES)
     p.add_argument("--model-name", default=None)
     p.add_argument("--epochs",     type=int, default=None)
+    p.add_argument("--patience",   type=int, default=None)
     p.add_argument("--gpu",          default=None, help="Override CUDA_VISIBLE_DEVICES, e.g. '0,1'")
     p.add_argument("--max-parallel", type=int, default=1,
                    help="Max concurrent jobs per GPU (default 1 = fastest for compute-bound training)")
@@ -50,7 +51,7 @@ def main():
         sys.exit(1)
 
     from transformers import AutoTokenizer
-    from src.config import DATASETS, MODEL_NAME, N_EPOCHS, SEED, TRAIN_RATIO
+    from src.config import DATASETS, MODEL_NAME, N_EPOCHS, PATIENCE, SEED, TRAIN_RATIO
     from src.data_utils import get_tokenized_cache_path, get_tokenized_dataset
     from src.parallel_utils import JobSpec, estimate_job_memory_gb, run_parallel_jobs
     from src.paths import MODELS_DIR
@@ -58,11 +59,12 @@ def main():
 
     model_name = args.model_name or MODEL_NAME
     epochs     = args.epochs or N_EPOCHS
+    patience   = args.patience or PATIENCE
     strategy   = args.strategy
 
     logging.info("Strategy : %s", strategy)
     logging.info("Model    : %s", model_name)
-    logging.info("Epochs   : %d", epochs)
+    logging.info("Epochs   : %d (patience=%d)", epochs, patience)
 
     # 1. Warm tokenized cache for all datasets
     tokenizer  = AutoTokenizer.from_pretrained(model_name)
@@ -93,7 +95,7 @@ def main():
         model_dir       = models_dir / dataset_id
         jobs.append(JobSpec(
             job_id=dataset_id,
-            args=(dataset_id, str(train_cache), model_name, str(model_dir), epochs),
+            args=(dataset_id, str(train_cache), model_name, str(model_dir), epochs, patience),
             weight_gb=weight_gb,
         ))
 
@@ -106,20 +108,28 @@ def main():
     job_results = run_parallel_jobs(jobs, train_fn=train_one_job,
                                     max_jobs_per_gpu=args.max_parallel)
 
-    # 4. Save results JSON
+    # 4. Save results JSON — preserve existing entries for skipped jobs
     results_path = models_dir / "train_results.json"
     results_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = {}
+    if results_path.exists():
+        existing = {e["job_id"]: e for e in json.loads(results_path.read_text())}
+
     summary = []
     for r in job_results:
-        status = "ok" if r.success else f"FAILED: {r.error}"
+        skipped = (r.return_value or {}).get("skipped", False) if r.success else False
+        status = "skipped" if skipped else ("ok" if r.success else f"FAILED: {r.error}")
         logging.info("  %-45s  gpu=%d  %.0fs  %s",
                      r.job_id, r.gpu_index, r.elapsed_seconds, status)
-        summary.append({
-            "job_id": r.job_id, "strategy": strategy, "model_name": model_name,
-            "epochs": epochs, "gpu_index": r.gpu_index,
-            "success": r.success, "elapsed_seconds": round(r.elapsed_seconds, 1),
-            "error": r.error,
-        })
+        if skipped and r.job_id in existing:
+            summary.append(existing[r.job_id])
+        else:
+            summary.append({
+                "job_id": r.job_id, "strategy": strategy, "model_name": model_name,
+                "epochs": epochs, "patience": patience, "gpu_index": r.gpu_index,
+                "success": r.success, "elapsed_seconds": round(r.elapsed_seconds, 1),
+                "error": r.error,
+            })
     results_path.write_text(json.dumps(summary, indent=2))
     logging.info("Saved %s", results_path)
 

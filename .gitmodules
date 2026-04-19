@@ -1,0 +1,4 @@
+[submodule "docs/ACL2025_Undersampling"]
+	path = docs/ACL2025_Undersampling
+	url = https://github.com/guilherme8426/ACL2025_Undersampling.git
+	branch = main
