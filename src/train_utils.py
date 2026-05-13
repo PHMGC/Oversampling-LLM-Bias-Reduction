@@ -119,15 +119,21 @@ def train_model(
     val_fraction: float = 0.1,
     device: str = "cuda",
     num_workers: int = 4,
-    repo_id: str = "PHMGC/roberta-bias-reduction"
+    repo_id: str = "PHMGC/roberta-bias-reduction",
+    force_retrain: bool = False,
 ):
     """High-level wrapper: splits off a val set, trains with early stopping, saves."""
     output_path = Path(output_dir)
 
     has_weights = (output_path / "model.safetensors").exists() or (output_path / "pytorch_model.bin").exists()
-    if has_weights:
+    if has_weights and not force_retrain:
         print(f"Modelo já treinado localmente em: {output_path.name}")
         return model, True
+
+    if has_weights and force_retrain:
+        print(f"Re-treinando (--force): limpando {output_path.name}")
+        import shutil
+        shutil.rmtree(output_path, ignore_errors=True)
 
     # Split train → train + val
     val_size = max(1, int(len(train_dataset) * val_fraction))
@@ -171,13 +177,11 @@ def train_one_job(
     model_dir: str,
     epochs: int,
     patience: int,
-) -> str:
-    """Module-level subprocess entry point for run_parallel_jobs().
+    force_retrain: bool = False,
+) -> dict:
+    """Train a single dataset sequentially.
 
-    Must be defined here (not in a notebook) so pickle can serialize it
-    by dotted reference 'src.train_utils.train_one_job' for the spawn context.
-    All heavy imports are deferred so they resolve after CUDA_VISIBLE_DEVICES
-    is set by _worker_entry in parallel_utils.
+    Heavy imports are deferred so they resolve after CUDA_VISIBLE_DEVICES is set.
     """
     from datasets import load_from_disk
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
@@ -194,5 +198,6 @@ def train_one_job(
         output_dir=model_dir,
         epochs=epochs,
         patience=patience,
+        force_retrain=force_retrain,
     )
     return {"dataset_id": dataset_id, "skipped": skipped}

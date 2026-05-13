@@ -28,3 +28,10 @@ DATASETS = {
         "digital_music",
     ],
 }
+
+# Flattened list of all dataset IDs for use in --dataset parameter
+DATASET_IDS: list[str] = [
+    f"{author}/{name}"
+    for author, names in DATASETS.items()
+    for name in names
+]

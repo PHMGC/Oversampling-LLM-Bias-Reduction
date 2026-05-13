@@ -1,11 +1,12 @@
-#!/usr/bin/env python3
-"""Train model across all datasets for a given balancing strategy.
+"""Train models sequentially across datasets for a given balancing strategy.
 
 Usage:
-    python scripts/train.py                        # baseline
-    python scripts/train.py --strategy baseline
-    python scripts/train.py --epochs 5 --gpu 0,1
-    python scripts/train.py --dry-run              # print job plan only
+    python scripts/train.py --strategy baseline                    # train all datasets
+    python scripts/train.py --strategy baseline --dataset mcauley/luxury_beauty
+    python scripts/train.py --strategy baseline --dataset mcauley/luxury_beauty mcauley/cds_reviews
+    python scripts/train.py --strategy baseline --epochs 5 --gpu 0
+    python scripts/train.py --strategy baseline --dry-run           # dry-run
+    python scripts/train.py --strategy baseline --force             # re-train existing models
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.config import STRATEGIES  # lightweight, safe to import early
+from src.config import STRATEGIES, DATASET_IDS
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -30,12 +31,14 @@ logging.getLogger("huggingface_hub.file_download").setLevel(logging.WARNING)
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--strategy",   required=True, choices=STRATEGIES)
+    p.add_argument("--dataset",    nargs='*', default=None, choices=DATASET_IDS,
+                   help="Train specific dataset(s). Can specify multiple: --dataset mcauley/luxury_beauty mcauley/cds_reviews. Default: all datasets.")
     p.add_argument("--model-name", default=None)
     p.add_argument("--epochs",     type=int, default=None)
     p.add_argument("--patience",   type=int, default=None)
-    p.add_argument("--gpu",          default=None, help="Override CUDA_VISIBLE_DEVICES, e.g. '0,1'")
-    p.add_argument("--max-parallel", type=int, default=1,
-                   help="Max concurrent jobs per GPU (default 1 = fastest for compute-bound training)")
+    p.add_argument("--gpu",   default=None, help="Override CUDA_VISIBLE_DEVICES, e.g. '0'")
+    p.add_argument("--force", action="store_true",
+                   help="Force re-training even if model already exists locally")
     p.add_argument("--dry-run",      action="store_true")
     return p.parse_args()
 
@@ -46,14 +49,9 @@ def main():
     if args.gpu is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
-    if args.max_parallel < 1:
-        logging.error("--max-parallel must be >= 1")
-        sys.exit(1)
-
     from transformers import AutoTokenizer
     from src.config import DATASETS, MODEL_NAME, N_EPOCHS, PATIENCE, SEED, TRAIN_RATIO
     from src.data_utils import get_tokenized_cache_path, get_tokenized_dataset
-    from src.parallel_utils import JobSpec, estimate_job_memory_gb, run_parallel_jobs
     from src.paths import MODELS_DIR
     from src.train_utils import train_one_job
 
@@ -66,12 +64,27 @@ def main():
     logging.info("Model    : %s", model_name)
     logging.info("Epochs   : %d (patience=%d)", epochs, patience)
 
+    # Handle dataset filtering: --dataset with no args means "all", --dataset X Y means "X and Y"
+    target_datasets = set(args.dataset) if args.dataset is not None and len(args.dataset) > 0 else set()
+    if target_datasets:
+        logging.info("Datasets : %s", ", ".join(sorted(target_datasets)))
+    else:
+        logging.info("Datasets : all")
+
+    if args.force:
+        logging.info("Force re-training enabled (--force)")
+
     # 1. Warm tokenized cache for all datasets
     tokenizer  = AutoTokenizer.from_pretrained(model_name)
     dataset_ids = []
     for author, names in DATASETS.items():
         for name in names:
             dataset_id = f"{author}/{name}"
+
+            # Filter by --dataset if specified
+            if target_datasets and dataset_id not in target_datasets:
+                continue
+
             try:
                 get_tokenized_dataset(author, name, tokenizer,
                                       split="train", strategy=strategy,
@@ -85,55 +98,86 @@ def main():
         logging.error("No datasets ready. Run `00_preprocessing.ipynb` first.")
         sys.exit(1)
 
-    # 2. Build job specs
-    weight_gb  = estimate_job_memory_gb(model_name)
+    # 2. Build and execute training jobs sequentially
     models_dir = MODELS_DIR / strategy
-    jobs = []
+    job_results = []
+
     for dataset_id in dataset_ids:
         author, name    = dataset_id.split("/", 1)
         train_cache     = get_tokenized_cache_path(author, name, "train", strategy)
         model_dir       = models_dir / dataset_id
-        jobs.append(JobSpec(
-            job_id=dataset_id,
-            args=(dataset_id, str(train_cache), model_name, str(model_dir), epochs, patience),
-            weight_gb=weight_gb,
-        ))
+
+        if args.dry_run:
+            logging.info("  [dry-run] %s", dataset_id)
+            continue
+
+        # Execute training for this dataset
+        import time
+        start = time.monotonic()
+        try:
+            rv = train_one_job(dataset_id, str(train_cache), model_name, str(model_dir),
+                               epochs, patience, force_retrain=args.force)
+            elapsed = time.monotonic() - start
+            skipped = rv.get("skipped", False)
+            status = "skipped" if skipped else "ok"
+            logging.info("  %-45s  %.0fs  %s", dataset_id, elapsed, status)
+            job_results.append({
+                "job_id": dataset_id,
+                "success": True,
+                "skipped": skipped,
+                "elapsed_seconds": elapsed,
+                "error": None,
+            })
+        except Exception as exc:
+            elapsed = time.monotonic() - start
+            logging.error("  %-45s  %.0fs  FAILED: %s", dataset_id, elapsed, exc)
+            job_results.append({
+                "job_id": dataset_id,
+                "success": False,
+                "skipped": False,
+                "elapsed_seconds": elapsed,
+                "error": str(exc),
+            })
 
     if args.dry_run:
-        for j in jobs:
-            logging.info("  %s  (%.2f GB)", j.job_id, j.weight_gb)
         return
 
-    # 3. Dispatch
-    job_results = run_parallel_jobs(jobs, train_fn=train_one_job,
-                                    max_jobs_per_gpu=args.max_parallel)
-
-    # 4. Save results JSON — preserve existing entries for skipped jobs
+    # 3. Save results JSON — preserve existing entries, update only newly run jobs
     results_path = models_dir / "train_results.json"
     results_path.parent.mkdir(parents=True, exist_ok=True)
     existing = {}
     if results_path.exists():
-        existing = {e["job_id"]: e for e in json.loads(results_path.read_text())}
+        data = json.loads(results_path.read_text())
+        existing = {e["job_id"]: e for e in data if e is not None}
 
-    summary = []
+    # Build map of newly run job results
+    new_results = {}
     for r in job_results:
-        skipped = (r.return_value or {}).get("skipped", False) if r.success else False
-        status = "skipped" if skipped else ("ok" if r.success else f"FAILED: {r.error}")
-        logging.info("  %-45s  gpu=%d  %.0fs  %s",
-                     r.job_id, r.gpu_index, r.elapsed_seconds, status)
-        if skipped and r.job_id in existing:
-            summary.append(existing[r.job_id])
+        if r["skipped"]:
+            # Keep the existing entry if job was skipped
+            if r["job_id"] in existing:
+                new_results[r["job_id"]] = existing[r["job_id"]]
         else:
-            summary.append({
-                "job_id": r.job_id, "strategy": strategy, "model_name": model_name,
-                "epochs": epochs, "patience": patience, "gpu_index": r.gpu_index,
-                "success": r.success, "elapsed_seconds": round(r.elapsed_seconds, 1),
-                "error": r.error,
-            })
+            # Update with newly run result
+            new_results[r["job_id"]] = {
+                "job_id": r["job_id"], "strategy": strategy, "model_name": model_name,
+                "epochs": epochs, "patience": patience, "gpu_index": 0,
+                "success": r["success"], "elapsed_seconds": round(r["elapsed_seconds"], 1),
+                "elapsed_source": "measured",
+                "error": r["error"],
+            }
+
+    # Preserve all existing entries that weren't in this run
+    for job_id, entry in existing.items():
+        if job_id not in new_results:
+            new_results[job_id] = entry
+
+    # Write all results (old + new) sorted by job_id
+    summary = [new_results[jid] for jid in sorted(new_results.keys())]
     results_path.write_text(json.dumps(summary, indent=2))
     logging.info("Saved %s", results_path)
 
-    if any(not r.success for r in job_results):
+    if any(not r["success"] for r in job_results):
         sys.exit(1)
 
 
