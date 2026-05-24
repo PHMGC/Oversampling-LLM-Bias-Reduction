@@ -11,7 +11,7 @@ Experimental investigation of **oversampling** strategies to reduce classificati
 - PDF: [https://aclanthology.org/2025.acl-long.458.pdf](https://aclanthology.org/2025.acl-long.458.pdf)
 - Codebase: [https://github.com/guilherme8426/ACL2025_Undersampling](https://github.com/guilherme8426/ACL2025_Undersampling)
 
-This project is **intrinsically linked** to that work: it replicates the paper's experimental setup (same model, datasets, hyperparameters, and metrics) and extends it by evaluating **oversampling** and **LLM-based paraphrasing** as complementary bias-reduction strategies — areas the paper explicitly leaves as future work.
+This project is **an extension** of that work: it replicates the paper's experimental setup (same model, datasets, hyperparameters, and metrics) and extends it by evaluating **oversampling** and **LLM-based paraphrasing** as complementary bias-reduction strategies — areas the paper explicitly leaves as future work.
 
 The baseline results in `01_baseline.ipynb` serve as a direct replication check against the paper's NoUnder numbers. The undersampling experiments in `04_undersampling.ipynb` reproduce the paper's methods (UBR, E2SC_US, CNN, NM1, NM2) for cross-comparison with the new oversampling strategies.
 
@@ -57,8 +57,8 @@ exps/
 ├── 00_preprocessing.ipynb       # download and prepare datasets
 ├── 01_baseline.ipynb            # no balancing (baseline) — replication check vs. paper
 ├── 02_simple_oversampling.ipynb # duplicate minority samples
-├── 03_llm_paraphrasing.ipynb    # synthesize minority samples via LLM
-├── 04_undersampling.ipynb       # reproduce paper's undersampling methods
+├── 03_undersampling.ipynb       # reproduce paper's undersampling methods
+├── 04_llm_paraphrasing.ipynb    # synthesize minority samples via LLM paraphrasing
 └── 05_conclusion.ipynb          # results summary and discussion
 ```
 

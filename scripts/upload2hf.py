@@ -3,81 +3,56 @@ from pathlib import Path
 from huggingface_hub import HfApi
 from dotenv import load_dotenv
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.append(str(Path(__file__).parent.parent))
 from src.paths import ROOT_DIR
 
-
 def _get_api() -> HfApi:
-    token = os.environ.get("HF_TOKEN")
-    if not token:
-        raise SystemExit("HF_TOKEN env var not set. Run as: HF_TOKEN=hf_xxx python src/upload2hf.py")
-    return HfApi(token=token)
+	token = os.environ.get("HF_TOKEN")
+	if not token:
+		raise SystemExit("HF_TOKEN env var not set. Run as: HF_TOKEN=hf_xxx python src/upload2hf.py")
+	return HfApi(token=token)
 
-
-def upload_models_to_hub(repo_id: str, models_base_dir: str):
-    """
-    Uploads all trained models from a local directory to a single Hugging Face repository,
-    using a different revision (branch) for each model.
-    """
-    api = _get_api()
-    base_path = Path(models_base_dir)
-
-    model_dirs = list({
-        p.parent
-        for pattern in ("model.safetensors", "pytorch_model.bin")
-        for p in base_path.rglob(pattern)
-    })
-    print(f"Found {len(model_dirs)} models with weights to upload.")
-
-    for model_dir in model_dirs:
-        rel_path = model_dir.relative_to(base_path)
-
-        # Skip if already on Hub
-        try:
-            from huggingface_hub import hf_hub_url, get_hf_file_metadata
-            get_hf_file_metadata(hf_hub_url(repo_id=repo_id, filename=f"{rel_path}/config.json"))
-            print(f"  {rel_path}: already on Hub, skipping.")
-            continue
-        except Exception:
-            pass
-
-        print(f"\nUploading: {rel_path}")
-        try:
-            api.upload_folder(
-                folder_path=str(model_dir),
-                repo_id=repo_id,
-                path_in_repo=str(rel_path),
-                repo_type="model",
-                commit_message=f"Upload model for {rel_path}"
-            )
-            print(f"  Done: {rel_path}")
-        except Exception as e:
-            print(f"  Error uploading {rel_path}: {e}")
-
-def upload_datasets_to_hub(repo_id: str, data_dir: str):
-    """
-    Uploads the entire data/ folder to a HuggingFace Dataset repository,
-    preserving raw/ and tokenized/ subfolders. Unchanged files are skipped automatically.
-    """
-    api = _get_api()
-    api.upload_folder(
-        folder_path=data_dir,
-        repo_id=repo_id,
-        repo_type="dataset",
-        commit_message="Sync datasets",
-    )
-    print(f"Done: {data_dir} → {repo_id}")
+def upload_all_to_hub(repo_id: str, local_dir: str, repo_type: str, message: str):
+	"""
+	Uploads an entire directory to Hugging Face in a single commit.
+	The library automatically handles LFS and skips unchanged files.
+	"""
+	api = _get_api()
+	print(f"Syncing {local_dir} to {repo_id}...")
+	
+	try:
+		api.upload_folder(
+			folder_path=local_dir,
+			repo_id=repo_id,
+			repo_type=repo_type,
+			commit_message=message,
+			# multi_commits=True # Opcional: Útil se o volume de dados for massivo (>50GB)
+		)
+		print(f"Done: {local_dir} → {repo_id}")
+	except Exception as e:
+		print(f"Error syncing {local_dir}: {e}")
 
 if __name__ == "__main__":
-    load_dotenv(ROOT_DIR / ".env")
+	load_dotenv(ROOT_DIR / ".env")
 
-    model_repo_id = "PHMGC/roberta-bias-reduction"
-    dataset_repo_id = "PHMGC/roberta-bias-reduction-datasets"
-    models_dir = ROOT_DIR / "models"
-    data_dir   = ROOT_DIR / "data"
+	model_repo_id = "PHMGC/roberta-bias-reduction"
+	dataset_repo_id = "PHMGC/roberta-bias-reduction-datasets"
+	
+	models_dir = ROOT_DIR / "models"
+	data_dir   = ROOT_DIR / "data"
 
-    print("Uploading Models")
-    upload_models_to_hub(model_repo_id, str(models_dir))
+	# Upload de todos os modelos em um único commit
+	upload_all_to_hub(
+		repo_id=model_repo_id, 
+		local_dir=str(models_dir), 
+		repo_type="model", 
+		message="Sync all models: baseline and oversampling"
+	)
 
-    print("\nUploading Datasets")
-    upload_datasets_to_hub(dataset_repo_id, str(data_dir))
+	# Upload de todos os datasets em um único commit
+	upload_all_to_hub(
+		repo_id=dataset_repo_id, 
+		local_dir=str(data_dir), 
+		repo_type="dataset", 
+		message="Sync datasets"
+	)

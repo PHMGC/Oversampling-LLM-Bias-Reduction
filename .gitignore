@@ -1,7 +1,8 @@
-
 # Repo
-data/
-models/
+data
+models
+.env
+.venv
 
 # Python
 __pycache__/
@@ -9,11 +10,12 @@ __pycache__/
 .venv/
 
 # LLM
+CLAUDE.md
 .claude/
 
 # VSCode
 .vscode/
 
+# Local scripts
 *.bat
 *.sh
-*.env

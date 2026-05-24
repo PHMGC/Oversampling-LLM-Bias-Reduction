@@ -135,8 +135,16 @@ def get_tokenized_dataset(
 
     # 1. Local cache
     if cache_path.exists():
-        print(f"Cache local: {cache_path.name}")
-        return load_from_disk(str(cache_path))
+        try:
+            print(f"Cache local: {cache_path.name}")
+            return load_from_disk(str(cache_path))
+        except ValueError as e:
+            if "Feature type" in str(e):
+                import shutil
+                print(f"  Cache incompatível ({e}), removendo e recriando...")
+                shutil.rmtree(str(cache_path))
+            else:
+                raise
 
     # 2. HF Hub (stored under tokenized/{name} to mirror local structure)
     try:
